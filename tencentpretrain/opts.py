@@ -56,6 +56,8 @@ def model_opts(parser):
                         help="whether use logn scaling.")
     parser.add_argument("--use_dynamic_ntk", action="store_true",
                         help="whether use dynamic ntk.")
+    parser.add_argument("--use_rotate_half", action="store_true",
+                        help="whether rotate half when applying rotary embedding.")
 
     vision_opts(parser)
     audio_opts(parser)

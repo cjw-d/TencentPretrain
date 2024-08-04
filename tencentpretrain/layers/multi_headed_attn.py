@@ -2,8 +2,9 @@ import math
 import torch
 import torch.nn as nn
 from tencentpretrain import mpu
-from tencentpretrain.utils.rope import apply_rotary_emb, apply_rotary_emb_with_ntk
+from tencentpretrain.utils.rope import apply_rotary_emb
 from tencentpretrain.utils.lora import LoraLinear
+from tencentpretrain.utils.logn_scaling import apply_logn_scaling
 
 
 def repeat_kv(x: torch.Tensor, repeat_num: int) -> torch.Tensor:
@@ -76,7 +77,7 @@ class MultiHeadedAttention(nn.Module):
             self.layer_number = None
 
     def forward(self, key, value, query, mask, position_bias=None, has_residual_attention=False, prev_attn=None,
-                freqs_cis=None, alibi=None, use_logn_attn=False, use_dynamic_ntk=False):
+                freqs_cis=None, alibi=None, use_logn_attn=False, use_rotate_half=False):
         """
         Args:
             key: [batch_size x seq_length x hidden_size]
@@ -114,17 +115,10 @@ class MultiHeadedAttention(nn.Module):
         value = repeat_kv(value, self.repeat_num).transpose(1, 2)
 
         if freqs_cis is not None:
-            if use_dynamic_ntk:
-                query, key = apply_rotary_emb_with_ntk(query.transpose(1,2), key.transpose(1,2), freqs_cis=freqs_cis)
-            else:
-                query, key = apply_rotary_emb(query.transpose(1,2), key.transpose(1,2), freqs_cis=freqs_cis)
+            query, key = apply_rotary_emb(query.transpose(1,2), key.transpose(1,2), freqs_cis=freqs_cis, use_rotate_half=use_rotate_half)
 
-        key_size = key.size(2)
-        if key_size > self.max_seq_length and use_logn_attn and not self.training:
-            seq_start = key_size - query.size(2)
-            seq_end = key_size
-            logn_tensor = self.logn_tensor[:, :, seq_start:seq_end, :].type_as(query)
-            query = query * logn_tensor.expand_as(query)
+        if key.size(2) > self.max_seq_length and use_logn_attn and not self.training:
+            query = apply_logn_scaling(key.size(2), query.size(2), self.logn_tensor, query)
 
         scores = torch.matmul(query, key.transpose(-2, -1))
 

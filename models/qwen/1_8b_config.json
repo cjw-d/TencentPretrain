@@ -20,5 +20,6 @@
     "layernorm": "rms",
     "target": ["lm"],
     "use_logn_attn": true,
-    "use_dynamic_ntk": true
+    "use_dynamic_ntk": true,
+    "use_rotate_half": true
   }

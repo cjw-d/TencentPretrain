@@ -19,6 +19,7 @@ class TransformerLayer(nn.Module):
         self.has_residual_attention = args.has_residual_attention
         self.use_logn_attn = args.use_logn_attn
         self.use_dynamic_ntk = args.use_dynamic_ntk
+        self.use_rotate_half = args.use_rotate_half
 
         if self.relative_position_embedding:
             self.relative_pos_emb = args.relative_pos_emb
@@ -88,23 +89,17 @@ class TransformerLayer(nn.Module):
             position_bias = None
 
         if self.rotary_position_embedding and self.use_dynamic_ntk:
-            ntk_alpha = get_ntk_alpha(seq_length, self.max_seq_length) if seq_length > self.max_seq_length else 1.0
-            if seq_length > self.seq_len_cached or ntk_alpha != self.ntk_alpha_cached:
-                self.freqs_cis = update_freqs_cis(self.attention_head_size, seq_length * 2, ntk_alpha=ntk_alpha)
-                self.seq_len_cached = seq_length * 2
-                self.ntk_alpha_cached = ntk_alpha
+            self.freqs_cis, self.seq_len_cached, self.ntk_alpha_cached = update_freqs_cis(self.freqs_cis, seq_length, self.max_seq_length, 
+                                                                                          self.attention_head_size, self.seq_len_cached, self.ntk_alpha_cached)
 
-        if self.rotary_position_embedding and not self.use_dynamic_ntk:
+        if self.rotary_position_embedding:
             freqs_cis = self.freqs_cis[:seq_length].to(hidden.device)
-        elif self.use_dynamic_ntk:
-            cos, sin = self.freqs_cis
-            freqs_cis = [cos[:, :seq_length], sin[:, :seq_length]]
         else:
             freqs_cis = None
 
         if self.layernorm_positioning == "post":
             inter, prev_attn_out = self.self_attn(hidden, hidden, hidden, mask, position_bias, self.has_residual_attention,
-                                                  prev_attn, freqs_cis, use_logn_attn=self.use_logn_attn, use_dynamic_ntk=self.use_dynamic_ntk)
+                                                  prev_attn, freqs_cis, use_logn_attn=self.use_logn_attn, use_rotate_half=self.use_rotate_half)
             inter = self.dropout_1(inter)
             inter = self.layer_norm_1(inter + hidden)
             output = self.dropout_2(self.feed_forward(inter))
@@ -112,7 +107,7 @@ class TransformerLayer(nn.Module):
         else:
             inter = self.layer_norm_1(hidden)
             inter, prev_attn_out = self.self_attn(inter, inter, inter, mask, position_bias, self.has_residual_attention,
-                                                  prev_attn, freqs_cis, use_logn_attn=self.use_logn_attn, use_dynamic_ntk=self.use_dynamic_ntk)
+                                                  prev_attn, freqs_cis, use_logn_attn=self.use_logn_attn, use_rotate_half=self.use_rotate_half)
             inter = self.dropout_1(inter)
             hidden = hidden + inter
             output = self.layer_norm_2(hidden)
